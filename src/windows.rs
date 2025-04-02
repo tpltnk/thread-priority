@@ -8,8 +8,7 @@ use winapi::ctypes::c_int;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::processthreadsapi::{
-    GetCurrentThread, GetThreadPriority, SetThreadIdealProcessor, SetThreadPriority,
-    SetThreadPriorityBoost,
+    GetCurrentProcess, GetCurrentThread, GetThreadPriority, SetPriorityClass, SetProcessPriorityBoost, SetThreadIdealProcessor, SetThreadPriority, SetThreadPriorityBoost
 };
 use winapi::um::winbase;
 use winapi::um::winnt::HANDLE;
@@ -363,6 +362,112 @@ impl std::convert::TryFrom<u32> for crate::ThreadPriorityOsValue {
             _ => return Err(()),
         }))
     }
+}
+
+/// Alias for native process ID.
+pub type ProcessId = HANDLE;
+
+/// Gets current process handle.
+pub fn process_native_id() -> ProcessId {
+    unsafe { GetCurrentProcess() }
+}
+
+/// WinAPI process priority class representation.
+/// <https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass>
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum WinAPIProcessPriorityClass {
+    /// Begin background processing mode.
+    /// The system lowers the resource scheduling priorities of the process (and its threads) so that it can perform background work without significantly affecting activity in the foreground.
+    /// This value can be specified only if hProcess is a handle to the current process. The function fails if the process is already in background processing mode.
+    ///
+    /// # Warning
+    /// Windows Server 2003 and Windows XP: This value is not supported.
+    BackgroundBegin = winbase::PROCESS_MODE_BACKGROUND_BEGIN,
+    /// End background processing mode.
+    /// The system restores the resource scheduling priorities of the process (and its threads) as they were before the process entered background processing mode.
+    /// This value can be specified only if hProcess is a handle to the current process. The function fails if the process is not in background processing mode.
+    ///
+    /// # Warning
+    /// Windows Server 2003 and Windows XP:  This value is not supported.
+    BackgroundEnd = winbase::PROCESS_MODE_BACKGROUND_END,
+    /// Process that has priority above NORMAL_PRIORITY_CLASS but below HIGH_PRIORITY_CLASS.
+    AboveNormal = winbase::ABOVE_NORMAL_PRIORITY_CLASS,
+    /// Process that has priority above IDLE_PRIORITY_CLASS but below NORMAL_PRIORITY_CLASS.
+    BelowNormal = winbase::BELOW_NORMAL_PRIORITY_CLASS,
+    /// Process that performs time-critical tasks that must be executed immediately.
+    /// The threads of the process preempt the threads of normal or idle priority class processes.
+    /// An example is the Task List, which must respond quickly when called by the user, regardless of the load on the operating system.
+    /// Use extreme care when using the high-priority class, because a high-priority class application can use nearly all available CPU time.
+    High = winbase::HIGH_PRIORITY_CLASS,
+    /// Process whose threads run only when the system is idle.
+    /// The threads of the process are preempted by the threads of any process running in a higher priority class. An example is a screen saver.
+    /// The idle-priority class is inherited by child processes.
+    Idle = winbase::IDLE_PRIORITY_CLASS,
+    /// Process with no special scheduling needs.
+    Normal = winbase::NORMAL_PRIORITY_CLASS,
+    /// Process that has the highest possible priority.
+    /// The threads of the process preempt the threads of all other processes, including operating system processes performing important tasks.
+    /// For example, a real-time process that executes for more than a very brief interval can cause disk caches not to flush or cause the mouse to be unresponsive.
+    Realtime = winbase::REALTIME_PRIORITY_CLASS,
+}
+
+/// Disables or enables the ability of the system to temporarily boost the priority of the threads of the specified process.
+///
+/// # Usage
+/// 
+/// ```rust
+/// use thread_priority::*;
+/// 
+/// let process_id = process_native_id();
+/// assert!(set_process_priority_boost(process_id, true).is_ok());
+/// ```
+pub fn set_process_priority_boost(native: ProcessId, enabled: bool) -> Result<(), Error> {
+    unsafe {
+        if SetProcessPriorityBoost(native, enabled as i32) != 0 {
+            Ok(())
+        } else {
+            Err(Error::OS(GetLastError() as i32))
+        }
+    }
+}
+
+/// Like [`set_process_priority_boost`] but for current process.
+pub fn set_current_process_priority_boost(enabled: bool) -> Result<(), Error> {
+    set_process_priority_boost(process_native_id(), enabled)
+}
+
+/// Sets priority class for a process.
+/// 
+/// # Usage
+/// 
+/// ```rust
+/// use thread_priority::*;
+/// 
+/// let process_id = process_native_id();
+/// assert!(set_process_priority_class(process_id, WinAPIProcessPriorityClass::Normal).is_ok());
+/// ```
+pub fn set_process_priority_class(
+    native: ProcessId,
+    class: WinAPIProcessPriorityClass,
+) -> Result<(), Error> {
+    unsafe {
+        if SetPriorityClass(native, class as u32) != 0 {
+            Ok(())
+        } else {
+            Err(Error::OS(GetLastError() as i32))
+        }
+    }
+}
+
+/// Sets current process' priority class.
+///
+/// If there's an error, a result of
+/// [`GetLastError`](https://docs.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror) is returned.
+///
+/// This is a short-hand of the `set_process_priority_class` function for the current thread.
+pub fn set_current_process_priority_class(class: WinAPIProcessPriorityClass) -> Result<(), Error> {
+    set_process_priority_class(process_native_id(), class)
 }
 
 /// Windows-specific complemented part of the [`crate::ThreadExt`] trait.
